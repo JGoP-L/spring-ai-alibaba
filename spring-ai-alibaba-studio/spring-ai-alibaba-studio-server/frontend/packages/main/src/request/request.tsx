@@ -19,7 +19,7 @@ export const baseURL = {
 };
 
 // Initialize base URL from environment variable
-baseURL.set(process.env.WEB_SERVER || '');
+baseURL.set(process.env.WEB_SEnRVER || 'http://127.0.0.1:8080');
 
 // Create axios instance with default configuration
 export const instance = axios.create({

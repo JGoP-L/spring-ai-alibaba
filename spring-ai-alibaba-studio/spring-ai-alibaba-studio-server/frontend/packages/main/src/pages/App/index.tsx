@@ -24,13 +24,13 @@ const HomePage: React.FC = () => {
   };
 
   const handleCopilotCardClick = () => {
-    // TODO: Navigate to Copilot creation page
-    console.log('Navigate to Copilot creation page');
+    // Navigate to app creation page
+    navigate('/app');
   };
 
   const handleGraphDebugCardClick = () => {
-    // TODO: Navigate to Graph workflow debug page
-    console.log('Navigate to Graph workflow debug page');
+    // Navigate to workflow tab in app list for Graph debugging
+    navigate('/app/workflow');
   };
 
   const handleAgentManagementCardClick = () => {
