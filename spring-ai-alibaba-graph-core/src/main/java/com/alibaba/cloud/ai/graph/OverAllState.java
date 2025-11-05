@@ -22,6 +22,7 @@ import org.springframework.util.CollectionUtils;
 
 import java.io.Serializable;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.stream.Collector;
@@ -68,8 +69,9 @@ import static java.util.Optional.ofNullable;
  * status.</li>
  * </ul>
  *
- * <h2>Thread Safety</h2> This class is not thread-safe. External synchronization is
- * required if accessed concurrently.
+ * <h2>Thread Safety</h2> This class is thread-safe. Internal maps use 
+ * ConcurrentHashMap to support safe concurrent access from multiple threads.
+ * All public methods that modify state are designed to be thread-safe.
  *
  * @author disaster
  * @since 1.0.0.1
@@ -79,13 +81,13 @@ public final class OverAllState implements Serializable {
 
 	/**
 	 * Internal map storing the actual state data. All get/set operations on state values
-	 * go through this map.
+	 * go through this map. Uses ConcurrentHashMap for thread-safe concurrent access.
 	 */
 	private final Map<String, Object> data;
 
 	/**
 	 * Mapping of keys to their respective update strategies. Determines how values for
-	 * each key should be merged or updated.
+	 * each key should be merged or updated. Uses ConcurrentHashMap for thread-safe concurrent access.
 	 */
 	private final Map<String, KeyStrategy> keyStrategies;
 
@@ -109,11 +111,12 @@ public final class OverAllState implements Serializable {
 
 	/**
 	 * Snap shot optional.
+	 * Creates a thread-safe snapshot of the current state.
 	 * @return the optional
 	 */
 	public Optional<OverAllState> snapShot() {
 		return Optional
-			.of(new OverAllState(new HashMap<>(this.data), new HashMap<>(this.keyStrategies), this.store));
+			.of(new OverAllState(new ConcurrentHashMap<>(this.data), new ConcurrentHashMap<>(this.keyStrategies), this.store));
 	}
 
 	/**
@@ -121,8 +124,8 @@ public final class OverAllState implements Serializable {
 	 * @param data the data
 	 */
 	public OverAllState(Map<String, Object> data) {
-		this.data = data != null ? new HashMap<>(data) : new HashMap<>();
-		this.keyStrategies = new HashMap<>();
+		this.data = data != null ? new ConcurrentHashMap<>(data) : new ConcurrentHashMap<>();
+		this.keyStrategies = new ConcurrentHashMap<>();
 	}
 
 	/**
@@ -131,8 +134,8 @@ public final class OverAllState implements Serializable {
 	 * @param store the store instance
 	 */
 	public OverAllState(Map<String, Object> data, Store store) {
-		this.data = data != null ? new HashMap<>(data) : new HashMap<>();
-		this.keyStrategies = new HashMap<>();
+		this.data = data != null ? new ConcurrentHashMap<>(data) : new ConcurrentHashMap<>();
+		this.keyStrategies = new ConcurrentHashMap<>();
 		this.store = store;
 	}
 
@@ -140,8 +143,8 @@ public final class OverAllState implements Serializable {
 	 * Instantiates a new Over all state.
 	 */
 	public OverAllState() {
-		this.data = new HashMap<>();
-		this.keyStrategies = new HashMap<>();
+		this.data = new ConcurrentHashMap<>();
+		this.keyStrategies = new ConcurrentHashMap<>();
 		this.registerKeyAndStrategy(OverAllState.DEFAULT_INPUT_KEY, new ReplaceStrategy());
 	}
 
@@ -150,8 +153,8 @@ public final class OverAllState implements Serializable {
 	 * @param store the store instance
 	 */
 	public OverAllState(Store store) {
-		this.data = new HashMap<>();
-		this.keyStrategies = new HashMap<>();
+		this.data = new ConcurrentHashMap<>();
+		this.keyStrategies = new ConcurrentHashMap<>();
 		this.registerKeyAndStrategy(OverAllState.DEFAULT_INPUT_KEY, new ReplaceStrategy());
 		this.store = store;
 	}
@@ -162,8 +165,8 @@ public final class OverAllState implements Serializable {
 	 * @param keyStrategies the key strategies
 	 */
 	protected OverAllState(Map<String, Object> data, Map<String, KeyStrategy> keyStrategies) {
-		this.data = data != null ? data : new HashMap<>();
-		this.keyStrategies = keyStrategies != null ? keyStrategies : new HashMap<>();
+		this.data = data != null ? new ConcurrentHashMap<>(data) : new ConcurrentHashMap<>();
+		this.keyStrategies = keyStrategies != null ? new ConcurrentHashMap<>(keyStrategies) : new ConcurrentHashMap<>();
 		this.registerKeyAndStrategy(OverAllState.DEFAULT_INPUT_KEY, new ReplaceStrategy());
 	}
 
@@ -175,8 +178,8 @@ public final class OverAllState implements Serializable {
 	 */
 	protected OverAllState(Map<String, Object> data, Map<String, KeyStrategy> keyStrategies,
 			Store store) {
-		this.data = data != null ? data : new HashMap<>();
-		this.keyStrategies = keyStrategies != null ? keyStrategies : new HashMap<>();
+		this.data = data != null ? new ConcurrentHashMap<>(data) : new ConcurrentHashMap<>();
+		this.keyStrategies = keyStrategies != null ? new ConcurrentHashMap<>(keyStrategies) : new ConcurrentHashMap<>();
 		this.registerKeyAndStrategy(OverAllState.DEFAULT_INPUT_KEY, new ReplaceStrategy());
 		this.store = store;
 	}
@@ -421,7 +424,7 @@ public final class OverAllState implements Serializable {
 
 	private static <T, K, U> Collector<T, ?, Map<K, U>> toMapRemovingNulls(Function<? super T, ? extends K> keyMapper,
 			Function<? super T, ? extends U> valueMapper, BinaryOperator<U> mergeFunction) {
-		return Collector.of(HashMap::new, (map, element) -> {
+		return Collector.of(ConcurrentHashMap::new, (map, element) -> {
 			K key = keyMapper.apply(element);
 			U value = valueMapper.apply(element);
 			if (value == null) {
@@ -437,16 +440,16 @@ public final class OverAllState implements Serializable {
 				}
 			});
 			return map1;
-		}, Collector.Characteristics.UNORDERED);
+		}, Collector.Characteristics.UNORDERED, Collector.Characteristics.CONCURRENT);
 	}
 
 	private static <T, K, U> Collector<T, ?, Map<K, U>> toMapAllowingNulls(Function<? super T, ? extends K> keyMapper,
 			Function<? super T, ? extends U> valueMapper) {
-		return Collector.of(HashMap::new,
+		return Collector.of(ConcurrentHashMap::new,
 				(map, element) -> map.put(keyMapper.apply(element), valueMapper.apply(element)), (map1, map2) -> {
 					map1.putAll(map2);
 					return map1;
-				}, Collector.Characteristics.UNORDERED);
+				}, Collector.Characteristics.UNORDERED, Collector.Characteristics.CONCURRENT);
 	}
 
 	/**

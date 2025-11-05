@@ -93,7 +93,15 @@ public class ReactAgent extends BaseAgent {
 
 	private int maxIterations;
 
-	private int iterations = 0;
+	/**
+	 * Thread-local storage for iterations counter to ensure thread-safety
+	 * when the same ReactAgent instance is used by multiple concurrent requests.
+	 * 
+	 * This solves the problem where a singleton ReactAgent Bean in Spring would
+	 * share the iterations counter across different user requests, causing
+	 * unpredictable behavior.
+	 */
+	private ThreadLocal<Integer> iterations = ThreadLocal.withInitial(() -> 0);
 
 	private String instruction;
 
@@ -158,22 +166,31 @@ public class ReactAgent extends BaseAgent {
 	}
 
 	private AssistantMessage doMessageInvoke(Object message, RunnableConfig config) throws GraphRunnerException {
-		Map<String, Object> inputs= buildMessageInput(message);
-		Optional<OverAllState> state = doInvoke(inputs, config);
+		// Reset iterations counter for each new invocation to ensure thread-safety
+		// This is critical when the ReactAgent is used as a singleton (e.g., Spring Bean)
+		iterations.set(0);
+		
+		try {
+			Map<String, Object> inputs= buildMessageInput(message);
+			Optional<OverAllState> state = doInvoke(inputs, config);
 
-		if (StringUtils.hasLength(outputKey)) {
-			return state.flatMap(s -> s.value(outputKey))
+			if (StringUtils.hasLength(outputKey)) {
+				return state.flatMap(s -> s.value(outputKey))
+						.map(msg -> (AssistantMessage) msg)
+						.orElseThrow(() -> new IllegalStateException("Output key " + outputKey + " not found in agent state") );
+			}
+			return state.flatMap(s -> s.value("messages"))
+					.map(messageList -> (List<Message>) messageList)
+					.stream()
+					.flatMap(messageList -> messageList.stream())
+					.filter(msg -> msg instanceof AssistantMessage)
 					.map(msg -> (AssistantMessage) msg)
-					.orElseThrow(() -> new IllegalStateException("Output key " + outputKey + " not found in agent state") );
+					.reduce((first, second) -> second)
+					.orElseThrow(() -> new IllegalStateException("No AssistantMessage found in 'messages' state") );
+		} finally {
+			// Clean up ThreadLocal to prevent memory leaks
+			iterations.remove();
 		}
-		return state.flatMap(s -> s.value("messages"))
-				.map(messageList -> (List<Message>) messageList)
-				.stream()
-				.flatMap(messageList -> messageList.stream())
-				.filter(msg -> msg instanceof AssistantMessage)
-				.map(msg -> (AssistantMessage) msg)
-				.reduce((first, second) -> second)
-				.orElseThrow(() -> new IllegalStateException("No AssistantMessage found in 'messages' state") );
 	}
 
 	public StateGraph getStateGraph() {
@@ -544,7 +561,11 @@ public class ReactAgent extends BaseAgent {
 
 	private EdgeAction makeModelToTools(String modelDestination, String endDestination) {
 		return state -> {
-			if (iterations++ > maxIterations) {
+			// Thread-safe iteration counter using ThreadLocal
+			int currentIterations = iterations.get();
+			iterations.set(currentIterations + 1);
+			
+			if (currentIterations >= maxIterations) {
 				return endDestination;
 			}
 
